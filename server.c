@@ -8,9 +8,12 @@
 #include <errno.h>
 #include <unistd.h>
 
+#define NET_ASCII_MODE 1
+#define OCTET_MODE 0
+
 /* Structs created based on diagrams of message formats in recitation */
 struct request_mess{
-    int opcode;
+    int opcode: 1;
     int filename;
 };
 
@@ -26,7 +29,7 @@ struct ack_mess{
 };
 
 struct error_mess{
-    int opcode;
+    int opcode: 5;
     int error_num;
     int error_data;
 };
@@ -42,34 +45,39 @@ struct tftp{
 int main(int argc, char *argv[]){
 
     char data[512];
-    int sockfd;
-    struct sockaddr_in client, server;
+    int sockfd, new_sockfd;
+    struct sockaddr_in client, server, new_server;
     int well_known_port = 0;
     char *char1;
     ssize_t recieved, sent;
     struct tftp tftp_message;
-    struct tftp data_message_struct; 
-    struct tftp tftp_from_client;
-    struct tftp tftp_ack_message;
+    //struct tftp data_message_struct; 
+    //struct tftp tftp_from_client;
+    //struct tftp tftp_ack_message;
     int opcode;
+    int first_mess_opcode;
     struct timeval timeval;
     char *filename;
+    char name[512];
     char *eof; 
-    char *mode;
+    int mode;
+    int fd =0;
     char data_mess[512];
     FILE *file, *fixed_file;
     int datal;
-    int ephemeral_port = 5000;
+    int ephemeral_port = 0;
+    char mess_from_client[1024]={0};
+    char mode_var[512];
+    char nullchar = '\0';
+    fd_set rset;
+    struct data_mess mess_to_client;
+    struct ack_mess ack_from_client;
+    char data_mess_data[512];
+    char help_char;
 
     //check that both ip adress and port were used
     if(argc!=3){
         perror("Incorrect format");
-    }
-
-    sockfd = socket(AF_INET, SOCK_DGRAM, AI_PASSIVE);
-    if(sockfd == -1){
-        perror("socket error");
-        exit(-1);
     }
 
     //set well known port to argument given
@@ -77,89 +85,162 @@ int main(int argc, char *argv[]){
     server.sin_family = AF_INET;
     server.sin_addr.s_addr = htonl(INADDR_ANY);
     server.sin_port = well_known_port;
+    
 
+    //socket
+    if(sockfd = socket(AF_INET, SOCK_DGRAM, 0)==-1){
+        perror("socket error");
+        exit(-1);
+    }
 
-
-
+    //bind to server
     if(bind(sockfd, (struct sockaddr *) &server, sizeof(server))==-1){
         perror("binding error");
         exit(-1);
     }
 
+    printf("server side is running");
+
     while(1){
 
-        //recieve a message
-        recieved = recvfrom(sockfd, &tftp_message, sizeof(tftp_message), 0, (struct sockaddr *) &client, sizeof(server));
+        memset(&server, 0, sizeof server);
+        memset(&client, 0, sizeof client);
+
+        //recieve first RRQ from client
+        ssize_t socklen = sizeof(client);
+        recieved = recvfrom(sockfd, mess_from_client, sizeof(mess_from_client), 0, (struct sockaddr *) &client, socklen);
         if(recieved < 0){
-            if(errno != EAGAIN){
-                perror("Can't recieve message");
-            }else{
+            if(errno == EAGAIN){
+                fprint("nothing available yet, still waiting");
                 continue;
+            }else{
+                perror("Can't recieve message");
+                exit(-1);
             }
         }
 
-        if(recieved < 4){
-            //fill in
-        }
+        //start by getting the opcode to determine what we are doing. Opcode is always 2 bytes
+        memcpy(&first_mess_opcode, &mess_from_client, 2);
 
-        opcode = ntohs(tftp_message.opcode);
+        if(fork()<0){
+            perror("Can't fork");
+            exit(-1);
+        }else{
+            
+            first_mess_opcode = ntohs(first_mess_opcode);
+            if(first_mess_opcode==1){
+                //we are in RRQ
 
-        if(opcode == 1 || opcode == 3){
-
-            if(fork()==0){
-
-                if((sockfd = socket(AF_INET, SOCK_DGRAM, AI_PASSIVE)) < 0){
-                    perror("socket error");
-                    exit(-1);
+                //now need to get filename and mode
+                //bzero(filename, 512);
+                int i;
+                for(i=2; mess_from_client[i] != nullchar; i++){
+                    filename[i-2]=mess_from_client[i];
                 }
 
-                timeval.tv_usec = 0;
-                timeval.tv_sec = 3; 
-
-                if(setsockopt(sockfd, SOL_SOCKET, SO_RCVTIMEO, &timeval, sizeof(timeval))<0){
-                    perror("socket error");
-                    exit(-1);
+                //get mode. After the 2 bytes of opcode and 512 bytes of file
+                int j;
+                int new_index = 0;
+                for(j=i+1; mess_from_client[j]; j++){
+                    mode_var[new_index];
+                    new_index++;
                 }
 
-                filename = (char *) tftp_message.request_mess.filename;
-                eof = &filename[sizeof(tftp_message) - 3];
+                printf("First RRQ complete.");
+                printf("mode: %s", mode_var);
+                printf("file: %s", filename);
 
-                if(*eof != '\0'){
-                    exit(-1);
-                }
+                mode = ReturnMode(mode_var);
+                //TO DO: do different things with different modes
 
-                mode = strchr(filename, '\0') + 1;
-                opcode = ntohs(tftp_message.opcode);
-                if(opcode == 1){
-                    file = fopen(filename, "r");
-                }else{
-                    file = fopen(filename, "w");
-                }
-                
-
+                file = fopen(filename, "r");
                 if(file == NULL){
                     perror("file not found");
                     exit(-1);
-                }
+                }else{
+                    close(sockfd);
 
-                if(opcode == 1){
-                    
-                    if(strcasecmp(mode, "netascii")==0){
-                        //fixed_file = 
+                    //here is where we create a new ephemeral port to use and start new socket
+                    new_sockfd = socket(AF_INET, SOCK_DGRAM, 0);
+                    if(new_sockfd==-1){
+                        perror("socket error");
+                        exit(-1);
                     }
-                    int flag = 0;
-                    int num = 0;
-                    while(flag == 0){
-                        datal = fread(data, 1, sizeof(data), file);
-                        num++;
+                    
+                    new_server.sin_port = htons(ephemeral_port);
+                    new_server.sin_family = AF_INET;
+                    new_server.sin_addr.s_addr = htonl(INADDR_ANY);
 
-                        if(datal < 512){
-                            flag=1;
+                    //new bind
+                    if(bind(new_sockfd, (struct sockaddr *) &new_server, sizeof (new_server))<0){
+                        perror("binding error");
+                        exit(-1);
+                    }
+
+                    FD_ZERO(&rset);
+                    FD_SET(fd, &rset);
+                    timeval.tv_usec = 0;
+                    timeval.tv_sec = 8; 
+
+                    //we are in RRQ so we want to send data
+                    int done, k;
+                    done = 0;
+                    //this section was highly influenced by the code included in the mp3 instructions
+                    //from: UNP vol 1 1st edition, pg 499
+                    char nextChar = -1;
+                    int num=0;
+                    while(done==0){
+                        for(k=0; k<512; k++){
+                            if(nextChar >=0){
+                                //data_mess_data[k] = nextChar;
+                                mess_to_client.data[k]=nextChar;
+                                nextChar=-1;
+                                continue;
+                            }
+
+                            help_char = 'c';
+                            if(mode == NET_ASCII_MODE){
+                                if(help_char == '\n'){
+                                    help_char = '\r';
+                                    nextChar = '\n';
+                                }else if(help_char == '\r'){
+                                    nextChar = '\0';
+                                }else{
+                                    nextChar = -1;
+                                }
+                            }
+                            mess_to_client.data[i]=help_char;
                         }
 
+                        mess_to_client.opcode = htons(3);
+                        //mess_to_client.data = data_mess_data;
+                        mess_to_client.block_num = htons(num);
                         int i = 0;
+                        int select_val;
+                        int total_size;
                         while(i<10){
-                            memcpy(data_mess, data, datal);
+                            sent = sendto(new_sockfd, (void *) &mess_to_client, sizeof(mess_to_client.opcode)+sizeof(mess_to_client.data)+i, 0, (struct sockaddr *) &client, sizeof(server));
+                            if(sent==-1){
+                                perror("error sending");
+                            }
+                            select_val = select(new_sockfd+1, &rset, NULL, NULL, &timeval);
+                            if(select_val>0){
+                                //need to recieve here
+                                int recieve_from_client;
+                                recieve_from_client = recvfrom(new_sockfd, (void *) &ack_from_client, sizeof(ack_from_client), 0, (struct sockaddr *) &client, sizeof(server));
+                                if(recieve_from_client>=0){
+                                    if(ntohs(ack_from_client.opcode)==4){
+                                        if(ntohs(ack_from_client.block_num==num)){
+                                            //done=1;
+                                            break;
+                                        }
+                                    }
+                                }
+
+                            }else{
+                                i++;
+                            }
+                            /*memcpy(data_mess, data, datal);
                             data_message_struct.opcode = htons(3);
                             data_message_struct.data_mess.block_num = htons(num);
                             memcpy(data_message_struct.data_mess.data, data_mess, datal);
@@ -191,97 +272,35 @@ int main(int argc, char *argv[]){
                             }
 
                             //otherwise there was no response, try again
-                            i++;
-                        }
-
-                        int client_opcode;
-                        client_opcode = ntohs(tftp_from_client.opcode);
-                        //error opcode 
-                        if(client_opcode==5){
-                            //print statement
-                            exit(-1);
-                        }
-                        //looking for ack in return
-                        if(client_opcode!=4){
-                            //send error
-                            exit(-1);
-                        }
-                        int client_block;
-                        client_block = ntohs(tftp_from_client.ack_mess.block_num);
-                        if(client_block!=num){
-                            exit(-1);
-                        }
-                    }
-                }
-                //wrq
-                if(opcode==2){
-                    int num = 0;
-                    int flag = 0;
-                    tftp_ack_message.opcode = htons(4);
-                    tftp_ack_message.ack_mess.block_num = htons(num);
-                    int send_ack;
-                    send_ack = sendto(sockfd, &tftp_ack_message, sizeof(tftp_ack_message.ack_mess), 0, (struct sockaddr *) &client, sizeof(server));
-                    if(send_ack<0){
-                        exit(-1);
-                    }
-                    int i=0;
-                    while(flag==0){
-                        while(i<10){
-                            recieved = recvfrom(sockfd, &tftp_from_client, sizeof(tftp_from_client), 0, (struct sockaddr *) &client, sizeof(server));
-                            if(recieved>=4){
-                                break;
-                            }
-                            if(recieved < 0){
-                                if(errno != EAGAIN){
-                                    perror("Can't recieve message");
-                                }
-                            }else if(recieved >=0){
-                                if(recieved<4){
-                                    exit(-1);
-                                }
-                            }
-                            //otherwise try again
-                            i++;
+                            i++;*/
                         }
                         num++;
-                        int dataSize = sizeof(tftp_from_client.data_mess);
-                        if(recieved < dataSize){
-                            flag=1;
-                        }
-
-                        int client_block;
-                        client_block = ntohs(tftp_from_client.ack_mess.block_num);
-                        if(client_block!=num){
-                            exit(-1);
-                        }
-                        int client_op;
-                        client_op=ntohs(tftp_from_client.opcode);
-                        if(client_op!=3){
-                            exit(-1);
-                        }
-
-                        dataSize = fwrite(tftp_from_client.data_mess.data, 1, dataSize-4, file);
-                        if(dataSize<0){
-                            perror("write error");
-                            exit(-1);
-                        }
-
-                        tftp_ack_message.ack_mess.block_num = htons(num);
-                        dataSize = sendto(sockfd, &tftp_ack_message, sizeof(tftp_ack_message.ack_mess), 0, (struct sockaddr *) &client, sizeof(server));
-                        if(dataSize<0){
-                            exit(-1);
+                        if(i<512){
+                            done=1;
+                            break;
                         }
                     }
+                    fclose(filename);
+                    return(1);
                 }
-                printf("Successful transmit");
-                fclose(file);
-                close(sockfd);
-                exit(0);
+
+            }else if(first_mess_opcode==3){
+                //BONUS: WRQ support
             }
-        }else{
-            printf("invalid request");
         }
+        
     }
-    close(sockfd);
-    return 0;
+}
+
+int ReturnMode(char mode[512]){
+    char netascii_mode[512]="netascii";
+    char octet_mode[512]="octet";
+    if(strcasecmp(mode, netascii_mode)==0){
+        return 1;
+    }else if(strcasecmp(mode, octet_mode)==0){
+        return 0;
+    }else{
+        perror("Could not determine mode");
+    }
+                        
 }
