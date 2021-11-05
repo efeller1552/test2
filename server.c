@@ -44,7 +44,7 @@ int main(int argc, char *argv[]){
     char data[512];
     int sockfd;
     struct sockaddr_in client, server;
-    int port = 0;
+    int well_known_port = 0;
     char *char1;
     ssize_t recieved, sent;
     struct tftp tftp_message;
@@ -59,22 +59,27 @@ int main(int argc, char *argv[]){
     char data_mess[512];
     FILE *file, *fixed_file;
     int datal;
+    int ephemeral_port = 5000;
 
-    if(argc < 2){
+    //check that both ip adress and port were used
+    if(argc!=3){
         perror("Incorrect format");
     }
-
-    port = strtol(argv[2], &char1, 10);
-    
-    server.sin_family = AF_INET;
-    server.sin_addr.s_addr = htonl(INADDR_ANY);
-    server.sin_port = port;
 
     sockfd = socket(AF_INET, SOCK_DGRAM, AI_PASSIVE);
     if(sockfd == -1){
         perror("socket error");
         exit(-1);
     }
+
+    //set well known port to argument given
+    well_known_port = strtol(argv[2], &char1, 10);
+    server.sin_family = AF_INET;
+    server.sin_addr.s_addr = htonl(INADDR_ANY);
+    server.sin_port = well_known_port;
+
+
+
 
     if(bind(sockfd, (struct sockaddr *) &server, sizeof(server))==-1){
         perror("binding error");
