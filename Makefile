@@ -1,5 +1,5 @@
 server: server.c
-	gcc -I . client.c -o echos
+	gcc -I . server.c -o echos
 
 clean:
 	$(RM) *.o

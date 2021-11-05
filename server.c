@@ -45,6 +45,7 @@ int main(int argc, char *argv[]){
     int sockfd;
     struct sockaddr_in client, server;
     int port = 0;
+    char *char1;
     ssize_t recieved, sent;
     struct tftp tftp_message;
     struct tftp data_message_struct; 
@@ -61,11 +62,9 @@ int main(int argc, char *argv[]){
 
     if(argc < 2){
         perror("Incorrect format");
-    }else{
-        if(sscanf(argv[2], "%hu", &port)){
-            port=htons(port);
-        }
     }
+
+    port = strtol(argv[2], &char1, 10);
     
     server.sin_family = AF_INET;
     server.sin_addr.s_addr = htonl(INADDR_ANY);
