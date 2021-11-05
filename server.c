@@ -111,7 +111,7 @@ int main(int argc, char *argv[]){
         recieved = recvfrom(sockfd, mess_from_client, sizeof(mess_from_client), 0, (struct sockaddr *) &client, socklen);
         if(recieved < 0){
             if(errno == EAGAIN){
-                fprint("nothing available yet, still waiting");
+                printf("nothing available yet, still waiting");
                 continue;
             }else{
                 perror("Can't recieve message");
@@ -280,7 +280,7 @@ int main(int argc, char *argv[]){
                             break;
                         }
                     }
-                    fclose(filename);
+                    fclose(file);
                     return(1);
                 }
 
